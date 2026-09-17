@@ -70,6 +70,10 @@ int ldrValue = 0;
 WiFiClientSecure cmdClient;
 HTTPClient cmdHttp;
 bool isCmdInitialized = false;
+String lastCmdUrl = "";
+
+// Forward declarations
+void sendMotorAck(bool state);
 
 // ==========================================
 // MOTOR SWITCH FUNCTION
@@ -88,6 +92,30 @@ void setMotor(bool state) {
     Serial.println("===============================");
     Serial.println(">>> MOTOR: OFF (STANDBY)    <<<");
     Serial.println("===============================");
+  }
+}
+
+// ==========================================
+// IMMEDIATE HARDWARE CONFIRMATION (ACK)
+// ==========================================
+
+void sendMotorAck(bool state) {
+  if (WiFi.status() != WL_CONNECTED) return;
+
+  Serial.println("[ACK] Sending immediate hardware confirmation to server...");
+  WiFiClientSecure ackClient;
+  ackClient.setInsecure();
+  HTTPClient ackHttp;
+  String url = String(SERVER_URL) + "/api/control/" + String(DEVICE_ID) + "/ack";
+
+  if (ackHttp.begin(ackClient, url)) {
+    ackHttp.addHeader("Content-Type", "application/json");
+    ackHttp.setTimeout(3000);
+    String json = "{\"deviceId\":\"" + String(DEVICE_ID) + "\",\"motorState\":\"" + (state ? "ON" : "OFF") + "\"}";
+    int code = ackHttp.POST(json);
+    Serial.print("[ACK] Confirmation Response Code: ");
+    Serial.println(code);
+    ackHttp.end();
   }
 }
 
@@ -130,12 +158,14 @@ void automaticControl() {
     if (!motorState) {
       Serial.println("[AUTO] Soil is dry. Turning pump ON.");
       setMotor(true);
+      sendMotorAck(true);
     }
   } else {
     // Soil is WET / OPTIMAL -> Turn Motor OFF
     if (motorState) {
       Serial.println("[AUTO] Soil is moist. Turning pump OFF.");
       setMotor(false);
+      sendMotorAck(false);
     }
   }
 }
@@ -239,13 +269,18 @@ void sendSensorData() {
 void checkServerCommand() {
   if (WiFi.status() != WL_CONNECTED) return;
 
-  String url = String(SERVER_URL) + "/api/control/" + String(DEVICE_ID);
+  // Append current actual motor state so the server always knows real hardware status
+  String targetUrl = String(SERVER_URL) + "/api/control/" + String(DEVICE_ID) + "?motorState=" + (motorState ? "ON" : "OFF");
 
-  if (!isCmdInitialized) {
-    cmdHttp.begin(cmdClient, url);
+  if (!isCmdInitialized || targetUrl != lastCmdUrl) {
+    if (isCmdInitialized) {
+      cmdHttp.end();
+    }
+    cmdHttp.begin(cmdClient, targetUrl);
     cmdHttp.setReuse(true);       // Re-use TLS connection for fast response!
     cmdHttp.setTimeout(2500);
     isCmdInitialized = true;
+    lastCmdUrl = targetUrl;
   }
 
   int responseCode = cmdHttp.GET();
@@ -268,6 +303,9 @@ void checkServerCommand() {
         setMotor(manualMotorCommand);
         Serial.print("INSTANT COMMAND TRIGGERED: Motor is now ");
         Serial.println(motorState ? "ON" : "OFF");
+
+        // Immediately send hardware ACK confirmation to server
+        sendMotorAck(motorState);
       }
     }
 

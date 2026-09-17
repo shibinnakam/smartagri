@@ -20,6 +20,27 @@ const deviceControlSchema = new mongoose.Schema({
     type: Number,
     default: 3000
   },
+  actualMotorState: {
+    type: String,
+    enum: ['ON', 'OFF'],
+    default: 'OFF'
+  },
+  commandPending: {
+    type: Boolean,
+    default: false
+  },
+  commandSentAt: {
+    type: Date,
+    default: null
+  },
+  motorConfirmedAt: {
+    type: Date,
+    default: null
+  },
+  lastAckTimestamp: {
+    type: Date,
+    default: null
+  },
   lastSeen: {
     type: Date,
     default: null

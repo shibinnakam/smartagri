@@ -10,6 +10,10 @@ const state = {
   motorCommand: 'OFF',
   dryThreshold: 3000,
   currentMotorState: 'OFF',
+  actualMotorState: 'OFF',
+  commandPending: false,
+  pendingMotorTarget: null,
+  pendingConfirmationTimer: null,
   isOnline: false,
   lastSeen: null,
   activeChartTab: 'soil', // 'soil' | 'climate' | 'light'
@@ -61,12 +65,21 @@ const el = {
   pumpVisualCard: document.getElementById('pumpVisualCard'),
   pumpStateHeadline: document.getElementById('pumpStateHeadline'),
   pumpStateSubtext: document.getElementById('pumpStateSubtext'),
+  hardwareVerifyBadge: document.getElementById('hardwareVerifyBadge'),
+  hardwareVerifyText: document.getElementById('hardwareVerifyText'),
+  commandSyncBadge: document.getElementById('commandSyncBadge'),
   btnSetAutoMode: document.getElementById('btnSetAutoMode'),
   btnSetManualMode: document.getElementById('btnSetManualMode'),
   modeHintText: document.getElementById('modeHintText'),
   manualLockBadge: document.getElementById('manualLockBadge'),
   btnMotorOn: document.getElementById('btnMotorOn'),
   btnMotorOff: document.getElementById('btnMotorOff'),
+  motorOnSpinner: document.getElementById('motorOnSpinner'),
+  motorOnIcon: document.getElementById('motorOnIcon'),
+  motorOnText: document.getElementById('motorOnText'),
+  motorOffSpinner: document.getElementById('motorOffSpinner'),
+  motorOffIcon: document.getElementById('motorOffIcon'),
+  motorOffText: document.getElementById('motorOffText'),
   thresholdSlider: document.getElementById('thresholdSlider'),
   sliderValueText: document.getElementById('sliderValueText'),
   btnEmergencyStop: document.getElementById('btnEmergencyStop'),
@@ -195,6 +208,28 @@ function connectSSE() {
       }
     });
 
+    evtSource.addEventListener('command_pending', (e) => {
+      try {
+        const data = JSON.parse(e.data);
+        if (data.deviceId === state.deviceId && data.commandPending) {
+          handleCommandPending(data.motorCommand);
+        }
+      } catch (err) {
+        console.error('SSE command_pending error', err);
+      }
+    });
+
+    evtSource.addEventListener('motor_confirmed', (e) => {
+      try {
+        const data = JSON.parse(e.data);
+        if (data.deviceId === state.deviceId) {
+          handleHardwareConfirmation(data.actualMotorState);
+        }
+      } catch (err) {
+        console.error('SSE motor_confirmed error', err);
+      }
+    });
+
     evtSource.onerror = () => {
       state.sseConnected = false;
       evtSource.close();
@@ -221,7 +256,15 @@ function handleIncomingTelemetry(reading, online = true) {
 
   state.isOnline = true;
   state.lastSeen = reading.timestamp || new Date();
-  state.currentMotorState = reading.motorState || 'OFF';
+
+  // If we had a pending command matching incoming hardware motorState, confirm it!
+  if (state.commandPending && reading.motorState === state.pendingMotorTarget) {
+    handleHardwareConfirmation(reading.motorState);
+  } else if (!state.commandPending) {
+    state.actualMotorState = reading.motorState || 'OFF';
+    state.currentMotorState = state.actualMotorState;
+    updatePumpVisual(state.actualMotorState, false);
+  }
 
   // Update online dot & text
   el.deviceDot.className = 'status-indicator-dot online';
@@ -235,9 +278,6 @@ function handleIncomingTelemetry(reading, online = true) {
   updateTemperature(reading.temperature);
   updateHumidity(reading.humidity);
   updateSunlight(reading.ldrValue);
-
-  // Update Pump visual
-  updatePumpVisual(reading.motorState);
 
   // Update Control Mode if passed in telemetry
   if (reading.autoMode !== undefined && reading.autoMode !== state.autoMode) {
@@ -376,18 +416,181 @@ function updateSunlight(ldrVal) {
   }
 }
 
-function updatePumpVisual(motorState) {
+function updatePumpVisual(motorState, isPending = false, targetState = 'ON') {
+  if (!el.pumpVisualCard) return;
+
+  if (isPending) {
+    el.pumpVisualCard.classList.remove('active');
+    el.pumpVisualCard.classList.add('pending');
+    el.pumpStateHeadline.textContent = `AWAITING MOTOR ${targetState}...`;
+    el.pumpStateHeadline.style.color = '#fbbf24';
+    el.pumpStateSubtext.textContent = 'Command sent to ESP32. Waiting for hardware relay actuation...';
+
+    if (el.hardwareVerifyBadge) {
+      el.hardwareVerifyBadge.className = 'hardware-verify-badge badge-pending';
+      el.hardwareVerifyText.textContent = `⏳ Verifying Motor ${targetState}...`;
+    }
+    if (el.commandSyncBadge) {
+      el.commandSyncBadge.textContent = 'Awaiting Motor ACK...';
+      el.commandSyncBadge.style.color = '#fbbf24';
+    }
+    return;
+  }
+
+  el.pumpVisualCard.classList.remove('pending');
   const isOn = motorState === 'ON';
+
   if (isOn) {
     el.pumpVisualCard.classList.add('active');
-    el.pumpStateHeadline.textContent = 'MOTOR IS RUNNING (ON)';
+    el.pumpStateHeadline.textContent = 'MOTOR IS RUNNING (VERIFIED)';
     el.pumpStateHeadline.style.color = '#22d3ee';
     el.pumpStateSubtext.textContent = 'Relay active (Pin 26 LOW). Water is flowing to irrigation lines.';
+
+    if (el.hardwareVerifyBadge) {
+      el.hardwareVerifyBadge.className = 'hardware-verify-badge badge-confirmed';
+      el.hardwareVerifyText.textContent = '✓ Hardware Confirmed Running';
+    }
+    if (el.commandSyncBadge) {
+      el.commandSyncBadge.textContent = 'Commands synced & verified';
+      el.commandSyncBadge.style.color = 'var(--emerald-primary)';
+    }
   } else {
     el.pumpVisualCard.classList.remove('active');
     el.pumpStateHeadline.textContent = 'MOTOR IS OFF (STANDBY)';
     el.pumpStateHeadline.style.color = '#ffffff';
     el.pumpStateSubtext.textContent = 'Standby. Soil moisture is within safe limit.';
+
+    if (el.hardwareVerifyBadge) {
+      el.hardwareVerifyBadge.className = 'hardware-verify-badge badge-standby';
+      el.hardwareVerifyText.textContent = 'Hardware Standby';
+    }
+    if (el.commandSyncBadge) {
+      el.commandSyncBadge.textContent = 'Commands synced';
+      el.commandSyncBadge.style.color = 'var(--emerald-primary)';
+    }
+  }
+}
+
+function handleCommandPending(targetState) {
+  state.commandPending = true;
+  state.pendingMotorTarget = targetState;
+
+  if (targetState === 'ON') {
+    if (el.btnMotorOn) {
+      el.btnMotorOn.classList.add('loading');
+      if (el.motorOnSpinner) el.motorOnSpinner.style.display = 'inline-block';
+      if (el.motorOnIcon) el.motorOnIcon.style.display = 'none';
+      if (el.motorOnText) el.motorOnText.textContent = 'STARTING...';
+    }
+    if (el.btnMotorOff) {
+      el.btnMotorOff.disabled = true;
+    }
+  } else {
+    if (el.btnMotorOff) {
+      el.btnMotorOff.classList.add('loading');
+      if (el.motorOffSpinner) el.motorOffSpinner.style.display = 'inline-block';
+      if (el.motorOffIcon) el.motorOffIcon.style.display = 'none';
+      if (el.motorOffText) el.motorOffText.textContent = 'STOPPING...';
+    }
+    if (el.btnMotorOn) {
+      el.btnMotorOn.disabled = true;
+    }
+  }
+
+  updatePumpVisual(state.actualMotorState, true, targetState);
+}
+
+function resetButtonLoadings() {
+  if (el.btnMotorOn) {
+    el.btnMotorOn.classList.remove('loading');
+    el.btnMotorOn.disabled = false;
+    if (el.motorOnSpinner) el.motorOnSpinner.style.display = 'none';
+    if (el.motorOnIcon) el.motorOnIcon.style.display = 'inline-block';
+    if (el.motorOnText) el.motorOnText.textContent = 'START PUMP (ON)';
+  }
+  if (el.btnMotorOff) {
+    el.btnMotorOff.classList.remove('loading');
+    el.btnMotorOff.disabled = false;
+    if (el.motorOffSpinner) el.motorOffSpinner.style.display = 'none';
+    if (el.motorOffIcon) el.motorOffIcon.style.display = 'inline-block';
+    if (el.motorOffText) el.motorOffText.textContent = 'STOP PUMP (OFF)';
+  }
+}
+
+function armConfirmationTimeout(target) {
+  if (state.pendingConfirmationTimer) {
+    clearTimeout(state.pendingConfirmationTimer);
+  }
+  state.pendingConfirmationTimer = setTimeout(() => {
+    if (state.commandPending) {
+      state.commandPending = false;
+      state.pendingMotorTarget = null;
+      resetButtonLoadings();
+      updatePumpVisual(state.actualMotorState, false);
+
+      if (el.hardwareVerifyBadge) {
+        el.hardwareVerifyBadge.className = 'hardware-verify-badge badge-error';
+        el.hardwareVerifyText.textContent = 'Hardware Unresponsive';
+      }
+      if (el.commandSyncBadge) {
+        el.commandSyncBadge.textContent = 'Command Timed Out';
+        el.commandSyncBadge.style.color = '#f87171';
+      }
+
+      showToast('⚠️ Motor confirmation timed out! Check ESP32 power and Wi-Fi connection.', 'alert');
+      addLog(`⚠️ [TIMEOUT] ESP32 did not confirm Motor ${target} within 7 seconds.`, 'log-alert');
+    }
+  }, 7000);
+}
+
+function handleHardwareConfirmation(confirmedState) {
+  const previousState = state.actualMotorState;
+  const wasPending = state.commandPending;
+
+  if (state.pendingConfirmationTimer) {
+    clearTimeout(state.pendingConfirmationTimer);
+    state.pendingConfirmationTimer = null;
+  }
+
+  state.commandPending = false;
+  state.pendingMotorTarget = null;
+  state.actualMotorState = confirmedState;
+  state.currentMotorState = confirmedState;
+
+  resetButtonLoadings();
+  updatePumpVisual(confirmedState, false);
+
+  // Update Hero Strip
+  const isPumping = confirmedState === 'ON';
+  if (el.heroPumpTag) {
+    el.heroPumpTag.textContent = confirmedState;
+    el.heroPumpTag.className = isPumping ? 'pump-tag on' : 'pump-tag off';
+  }
+  if (el.heroSystemState) {
+    el.heroSystemState.textContent = isPumping ? 'IRRIGATING' : 'MONITORING';
+    el.heroSystemState.style.color = isPumping ? '#22d3ee' : '#34d399';
+  }
+
+  // Highlight active button in manual mode
+  if (!state.autoMode) {
+    if (confirmedState === 'ON') {
+      if (el.btnMotorOn) el.btnMotorOn.classList.add('active');
+      if (el.btnMotorOff) el.btnMotorOff.classList.remove('active');
+    } else {
+      if (el.btnMotorOn) el.btnMotorOn.classList.remove('active');
+      if (el.btnMotorOff) el.btnMotorOff.classList.add('active');
+    }
+  }
+
+  // Show success toast only when commanded or on state transition
+  if (wasPending || previousState !== confirmedState) {
+    if (confirmedState === 'ON') {
+      showToast('✅ Motor turned ON successfully! Hardware running.', 'success');
+      addLog('✅ [VERIFIED] Motor turned ON successfully! ESP32 relay active.', 'log-pump');
+    } else {
+      showToast('✅ Motor turned OFF successfully! Pump standby.', 'info');
+      addLog('✅ [VERIFIED] Motor turned OFF successfully! ESP32 pump standby.', 'log-pump');
+    }
   }
 }
 
@@ -474,6 +677,16 @@ async function fetchLatestTelemetry() {
         data.control.motorCommand,
         data.control.dryThreshold
       );
+
+      if (data.control.actualMotorState) {
+        if (state.commandPending && data.control.actualMotorState === state.pendingMotorTarget) {
+          handleHardwareConfirmation(data.control.actualMotorState);
+        } else if (!state.commandPending) {
+          state.actualMotorState = data.control.actualMotorState;
+          state.currentMotorState = data.control.actualMotorState;
+          updatePumpVisual(state.actualMotorState, false);
+        }
+      }
     }
 
     if (data.reading) {
@@ -682,24 +895,26 @@ function setupEventListeners() {
     }
   });
 
-  // Direct Motor Controls - Instant Action
+  // Direct Motor Controls - Hardware Confirmation Loop
   el.btnMotorOn.addEventListener('click', async () => {
-    // Instant optimistic UI response
-    updatePumpVisual('ON');
-    updateControlStateUI(false, 'ON', state.dryThreshold);
-    showToast('Starting Motor Immediately (Manual Mode)...', 'success');
-    addLog('⚡ Direct Motor Command sent: ON', 'log-pump');
+    if (state.commandPending && state.pendingMotorTarget === 'ON') return;
 
+    handleCommandPending('ON');
+    showToast('Signal transmitted. Waiting for ESP32 motor confirmation...', 'info');
+    addLog('📡 Motor ON command dispatched. Awaiting hardware acknowledgment...', 'log-pump');
+
+    armConfirmationTimeout('ON');
     await sendControlUpdate({ autoMode: false, motorCommand: 'ON' });
   });
 
   el.btnMotorOff.addEventListener('click', async () => {
-    // Instant optimistic UI response
-    updatePumpVisual('OFF');
-    updateControlStateUI(false, 'OFF', state.dryThreshold);
-    showToast('Stopping Motor Immediately...', 'info');
-    addLog('⚡ Direct Motor Command sent: OFF', 'log-pump');
+    if (state.commandPending && state.pendingMotorTarget === 'OFF') return;
 
+    handleCommandPending('OFF');
+    showToast('Signal transmitted. Waiting for ESP32 motor confirmation...', 'info');
+    addLog('📡 Motor OFF command dispatched. Awaiting hardware acknowledgment...', 'log-pump');
+
+    armConfirmationTimeout('OFF');
     await sendControlUpdate({ autoMode: false, motorCommand: 'OFF' });
   });
 
@@ -718,9 +933,11 @@ function setupEventListeners() {
 
   // Emergency Stop
   el.btnEmergencyStop.addEventListener('click', async () => {
+    handleCommandPending('OFF');
+    armConfirmationTimeout('OFF');
+    showToast('EMERGENCY SHUTOFF TRIGGERED! Signal transmitted to stop motor.', 'alert');
+    addLog('[EMERGENCY] Motor shut off command sent. Awaiting hardware acknowledgment.', 'log-alert');
     await sendControlUpdate({ autoMode: false, motorCommand: 'OFF' });
-    showToast('EMERGENCY SHUTOFF TRIGGERED! Motor stopped & switched to manual.', 'alert');
-    addLog('[EMERGENCY] Motor shut off immediately.', 'log-alert');
   });
 
   // Chart Tab Buttons

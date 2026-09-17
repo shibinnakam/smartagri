@@ -653,6 +653,22 @@ button {
   box-shadow: 0 0 25px rgba(6, 182, 212, 0.2);
 }
 
+.pump-graphic-card.pending {
+  border-color: rgba(245, 158, 11, 0.6);
+  background: radial-gradient(circle at 30% 50%, rgba(245, 158, 11, 0.14), rgba(0, 0, 0, 0.4));
+  box-shadow: 0 0 25px rgba(245, 158, 11, 0.25);
+}
+
+.pump-graphic-card.pending .pump-core {
+  background: rgba(245, 158, 11, 0.2);
+  border-color: #fbbf24;
+  color: #fbbf24;
+}
+
+.pump-graphic-card.pending .icon-pump-fan {
+  animation: spin-fan 2.5s linear infinite;
+}
+
 .pump-rings {
   position: relative;
   width: 70px;
@@ -711,6 +727,11 @@ button {
   animation: ripple 2s cubic-bezier(0.1, 0.2, 0.7, 1) infinite 0.8s;
 }
 
+.pump-graphic-card.pending .ring-1 {
+  border-color: rgba(245, 158, 11, 0.6);
+  animation: ripple 2s cubic-bezier(0.1, 0.2, 0.7, 1) infinite;
+}
+
 @keyframes ripple {
   0% { transform: scale(0.8); opacity: 1; }
   100% { transform: scale(1.6); opacity: 0; }
@@ -719,7 +740,15 @@ button {
 .pump-status-text {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 3px;
+  flex: 1;
+}
+
+.pump-header-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
 }
 
 .pump-label {
@@ -727,6 +756,50 @@ button {
   font-weight: 700;
   color: var(--text-muted);
   letter-spacing: 0.08em;
+}
+
+.hardware-verify-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  transition: all var(--trans-normal);
+}
+
+.hardware-verify-badge.badge-standby {
+  background: rgba(148, 163, 184, 0.1);
+  color: #94a3b8;
+  border: 1px solid rgba(148, 163, 184, 0.25);
+}
+
+.hardware-verify-badge.badge-pending {
+  background: rgba(245, 158, 11, 0.2);
+  color: #fbbf24;
+  border: 1px solid rgba(245, 158, 11, 0.5);
+  animation: pulse-badge 1.2s infinite;
+}
+
+.hardware-verify-badge.badge-confirmed {
+  background: rgba(16, 185, 129, 0.2);
+  color: #34d399;
+  border: 1px solid rgba(16, 185, 129, 0.5);
+  box-shadow: 0 0 10px rgba(16, 185, 129, 0.3);
+}
+
+.hardware-verify-badge.badge-error {
+  background: rgba(239, 68, 68, 0.2);
+  color: #f87171;
+  border: 1px solid rgba(239, 68, 68, 0.5);
+}
+
+@keyframes pulse-badge {
+  0% { opacity: 0.85; transform: scale(0.98); }
+  50% { opacity: 1; transform: scale(1.02); }
+  100% { opacity: 0.85; transform: scale(0.98); }
 }
 
 .pump-state-headline {
@@ -821,11 +894,36 @@ button {
   border: 1px solid var(--border-color);
   background: rgba(255, 255, 255, 0.03);
   color: var(--text-muted);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  transition: all var(--trans-normal);
 }
 
 .btn-motor-toggle:disabled {
   opacity: 0.4;
   cursor: not-allowed;
+}
+
+.btn-motor-toggle.loading {
+  opacity: 0.9;
+  cursor: wait;
+  border-color: #f59e0b !important;
+  background: rgba(245, 158, 11, 0.15) !important;
+  color: #fbbf24 !important;
+  box-shadow: 0 0 15px rgba(245, 158, 11, 0.3) !important;
+}
+
+.btn-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(251, 191, 36, 0.25);
+  border-top-color: #fbbf24;
+  border-radius: 50%;
+  animation: spin-fan 0.8s linear infinite;
+  display: inline-block;
+  flex-shrink: 0;
 }
 
 .btn-motor-toggle.active.btn-motor-on {

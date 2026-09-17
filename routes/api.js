@@ -15,6 +15,11 @@ const inMemoryStore = {
       autoMode: true,
       motorCommand: 'OFF',
       dryThreshold: 3000,
+      actualMotorState: 'OFF',
+      commandPending: false,
+      commandSentAt: null,
+      motorConfirmedAt: null,
+      lastAckTimestamp: null,
       lastSeen: null,
       latestReading: {
         temperature: 26.5,
@@ -76,16 +81,28 @@ router.post('/sensors', async (req, res) => {
       timestamp: new Date()
     };
 
+    let confirmedMatch = false;
+
     if (isDbConnected()) {
       // Save to MongoDB
       await SensorReading.create(parsedReading);
+
+      // Check existing control state
+      const currentControl = await DeviceControl.findOne({ deviceId });
+      if (currentControl && currentControl.commandPending && currentControl.motorCommand === parsedReading.motorState) {
+        confirmedMatch = true;
+      }
 
       // Update or create DeviceControl state
       await DeviceControl.findOneAndUpdate(
         { deviceId },
         {
           $set: {
+            actualMotorState: parsedReading.motorState,
             lastSeen: new Date(),
+            lastAckTimestamp: new Date(),
+            commandPending: confirmedMatch ? false : (currentControl ? currentControl.commandPending : false),
+            motorConfirmedAt: confirmedMatch ? new Date() : (currentControl ? currentControl.motorConfirmedAt : null),
             latestReading: parsedReading
           }
         },
@@ -103,24 +120,49 @@ router.post('/sensors', async (req, res) => {
           deviceId,
           autoMode: Boolean(autoMode),
           motorCommand: 'OFF',
-          dryThreshold: 3000
+          dryThreshold: 3000,
+          actualMotorState: parsedReading.motorState,
+          commandPending: false,
+          commandSentAt: null,
+          motorConfirmedAt: null,
+          lastAckTimestamp: new Date()
         };
       }
-      inMemoryStore.devices[deviceId].lastSeen = new Date();
-      inMemoryStore.devices[deviceId].latestReading = parsedReading;
+      const dev = inMemoryStore.devices[deviceId];
+      if (dev.commandPending && dev.motorCommand === parsedReading.motorState) {
+        confirmedMatch = true;
+        dev.commandPending = false;
+        dev.motorConfirmedAt = new Date();
+      }
+      dev.actualMotorState = parsedReading.motorState;
+      dev.lastSeen = new Date();
+      dev.lastAckTimestamp = new Date();
+      dev.latestReading = parsedReading;
     }
 
     // Broadcast live update to Web Dashboard via SSE
     broadcastUpdate('telemetry', {
       deviceId,
       reading: parsedReading,
+      actualMotorState: parsedReading.motorState,
       online: true
     });
+
+    if (confirmedMatch) {
+      broadcastUpdate('motor_confirmed', {
+        deviceId,
+        actualMotorState: parsedReading.motorState,
+        confirmed: true,
+        timestamp: new Date(),
+        message: `Motor turned ${parsedReading.motorState} successfully!`
+      });
+    }
 
     return res.status(200).json({
       success: true,
       message: 'Sensor data recorded successfully',
       deviceId,
+      actualMotorState: parsedReading.motorState,
       timestamp: parsedReading.timestamp
     });
   } catch (error) {
@@ -137,11 +179,17 @@ router.post('/sensors', async (req, res) => {
 // URL: GET /api/control/:deviceId
 // Returns JSON formatted strictly for ESP32 string matching:
 // {"deviceId":"smartfarm-01","autoMode":true,"motorCommand":"OFF"}
+// Optional query params from ESP32: ?motorState=ON or OFF
 // ----------------------------------------------------
 router.get('/control/:deviceId', async (req, res) => {
   try {
     const { deviceId } = req.params;
+    const rawReportedState = req.query.motorState || req.query.actualMotor || req.query.relay || req.query.state;
+    const reportedState = rawReportedState ? ((rawReportedState.toUpperCase() === 'ON' || rawReportedState === '1' || rawReportedState.toLowerCase() === 'true') ? 'ON' : 'OFF') : null;
+
     let device;
+    let confirmedMatch = false;
+    const now = new Date();
 
     if (isDbConnected()) {
       device = await DeviceControl.findOne({ deviceId });
@@ -151,11 +199,27 @@ router.get('/control/:deviceId', async (req, res) => {
           autoMode: true,
           motorCommand: 'OFF',
           dryThreshold: 3000,
-          lastSeen: new Date()
+          actualMotorState: reportedState || 'OFF',
+          commandPending: false,
+          commandSentAt: null,
+          motorConfirmedAt: null,
+          lastAckTimestamp: reportedState ? now : null,
+          lastSeen: now
         });
       } else {
-        // Update last poll timestamp
-        device.lastSeen = new Date();
+        device.lastSeen = now;
+        if (reportedState) {
+          device.actualMotorState = reportedState;
+          device.lastAckTimestamp = now;
+          if (device.latestReading) {
+            device.latestReading.motorState = reportedState;
+          }
+          if (device.commandPending && device.motorCommand === reportedState) {
+            confirmedMatch = true;
+            device.commandPending = false;
+            device.motorConfirmedAt = now;
+          }
+        }
         await device.save();
       }
     } else {
@@ -165,12 +229,42 @@ router.get('/control/:deviceId', async (req, res) => {
           autoMode: true,
           motorCommand: 'OFF',
           dryThreshold: 3000,
-          lastSeen: new Date(),
+          actualMotorState: reportedState || 'OFF',
+          commandPending: false,
+          commandSentAt: null,
+          motorConfirmedAt: null,
+          lastAckTimestamp: reportedState ? now : null,
+          lastSeen: now,
           latestReading: null
         };
       }
       device = inMemoryStore.devices[deviceId];
-      device.lastSeen = new Date();
+      device.lastSeen = now;
+      if (reportedState) {
+        device.actualMotorState = reportedState;
+        device.lastAckTimestamp = now;
+        if (device.latestReading) {
+          device.latestReading.motorState = reportedState;
+        }
+        if (device.commandPending && device.motorCommand === reportedState) {
+          confirmedMatch = true;
+          device.commandPending = false;
+          device.motorConfirmedAt = now;
+        }
+      }
+    }
+
+    // If pending command has just matched the hardware's reported state, broadcast confirmation!
+    if (confirmedMatch) {
+      broadcastUpdate('motor_confirmed', {
+        deviceId,
+        actualMotorState: device.actualMotorState,
+        motorCommand: device.motorCommand,
+        autoMode: device.autoMode,
+        confirmed: true,
+        timestamp: now,
+        message: `Motor turned ${device.actualMotorState} successfully!`
+      });
     }
 
     // Format response strictly so ESP32 code:
@@ -206,11 +300,13 @@ router.post('/control/:deviceId', async (req, res) => {
     const { autoMode, motorCommand, dryThreshold } = req.body;
 
     const updates = {};
+    const now = new Date();
     if (autoMode !== undefined) updates.autoMode = Boolean(autoMode);
     if (motorCommand !== undefined) {
       updates.motorCommand = motorCommand === 'ON' ? 'ON' : 'OFF';
-      // Sync latestReading motorState for immediate dashboard display
-      updates['latestReading.motorState'] = updates.motorCommand;
+      // Mark as pending hardware execution. Do NOT fake actualMotorState!
+      updates.commandPending = true;
+      updates.commandSentAt = now;
     }
     if (dryThreshold !== undefined) updates.dryThreshold = Number(dryThreshold);
 
@@ -229,35 +325,133 @@ router.post('/control/:deviceId', async (req, res) => {
           autoMode: true,
           motorCommand: 'OFF',
           dryThreshold: 3000,
+          actualMotorState: 'OFF',
+          commandPending: false,
+          commandSentAt: null,
+          motorConfirmedAt: null,
+          lastAckTimestamp: null,
           lastSeen: null,
           latestReading: { motorState: 'OFF' }
         };
       }
       Object.assign(inMemoryStore.devices[deviceId], updates);
-      if (inMemoryStore.devices[deviceId].latestReading) {
-        if (updates.motorCommand) {
-          inMemoryStore.devices[deviceId].latestReading.motorState = updates.motorCommand;
-        }
-      }
       updatedDevice = inMemoryStore.devices[deviceId];
     }
 
-    // Broadcast control state change to web clients
+    // Broadcast control state change & pending status to web clients
     broadcastUpdate('control_change', {
       deviceId,
       autoMode: updatedDevice.autoMode,
       motorCommand: updatedDevice.motorCommand,
-      dryThreshold: updatedDevice.dryThreshold
+      dryThreshold: updatedDevice.dryThreshold,
+      commandPending: updatedDevice.commandPending,
+      actualMotorState: updatedDevice.actualMotorState
     });
+
+    if (updates.motorCommand) {
+      broadcastUpdate('command_pending', {
+        deviceId,
+        motorCommand: updatedDevice.motorCommand,
+        autoMode: updatedDevice.autoMode,
+        commandPending: true,
+        actualMotorState: updatedDevice.actualMotorState,
+        timestamp: now
+      });
+    }
 
     return res.status(200).json({
       success: true,
-      message: 'Device command updated',
+      message: 'Device command queued for hardware execution',
       device: updatedDevice
     });
   } catch (error) {
     console.error('Error updating device control:', error);
     return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ----------------------------------------------------
+// 3b. Dedicated Hardware Acknowledgment Endpoint (Instant ACK)
+// URL: POST /api/control/:deviceId/ack or POST /api/control/ack
+// Used by ESP32 immediately after changing relay pin
+// ----------------------------------------------------
+router.post(['/control/:deviceId/ack', '/control/ack'], async (req, res) => {
+  try {
+    const deviceId = req.params.deviceId || req.body.deviceId || 'smartfarm-01';
+    const rawState = req.body.motorState || req.body.actualMotor || req.body.state || 'OFF';
+    const motorState = (rawState.toUpperCase() === 'ON' || rawState === '1' || rawState.toLowerCase() === 'true') ? 'ON' : 'OFF';
+    const autoMode = req.body.autoMode !== undefined ? Boolean(req.body.autoMode) : undefined;
+    const now = new Date();
+
+    const updateFields = {
+      actualMotorState: motorState,
+      commandPending: false,
+      motorConfirmedAt: now,
+      lastAckTimestamp: now,
+      lastSeen: now,
+      'latestReading.motorState': motorState
+    };
+    if (autoMode !== undefined) updateFields.autoMode = autoMode;
+
+    let device;
+
+    if (isDbConnected()) {
+      device = await DeviceControl.findOneAndUpdate(
+        { deviceId },
+        { $set: updateFields },
+        { upsert: true, new: true }
+      );
+    } else {
+      if (!inMemoryStore.devices[deviceId]) {
+        inMemoryStore.devices[deviceId] = {
+          deviceId,
+          autoMode: autoMode !== undefined ? autoMode : true,
+          motorCommand: motorState,
+          dryThreshold: 3000,
+          actualMotorState: motorState,
+          commandPending: false,
+          commandSentAt: null,
+          motorConfirmedAt: now,
+          lastAckTimestamp: now,
+          lastSeen: now,
+          latestReading: { motorState }
+        };
+      }
+      Object.assign(inMemoryStore.devices[deviceId], {
+        actualMotorState: motorState,
+        commandPending: false,
+        motorConfirmedAt: now,
+        lastAckTimestamp: now,
+        lastSeen: now
+      });
+      if (autoMode !== undefined) inMemoryStore.devices[deviceId].autoMode = autoMode;
+      if (inMemoryStore.devices[deviceId].latestReading) {
+        inMemoryStore.devices[deviceId].latestReading.motorState = motorState;
+      }
+      device = inMemoryStore.devices[deviceId];
+    }
+
+    // Broadcast instant hardware confirmation to all web clients
+    broadcastUpdate('motor_confirmed', {
+      deviceId,
+      actualMotorState: motorState,
+      motorCommand: device.motorCommand,
+      autoMode: device.autoMode,
+      confirmed: true,
+      timestamp: now,
+      message: `Motor turned ${motorState} successfully!`
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: `Hardware confirmed motor ${motorState}`,
+      deviceId,
+      actualMotorState: motorState,
+      confirmedAt: now
+    });
+  } catch (err) {
+    console.error('Error handling motor ACK:', err);
+    return res.status(500).json({ success: false, error: err.message });
   }
 });
 
@@ -287,15 +481,35 @@ router.get('/sensors/latest/:deviceId', async (req, res) => {
       }
     }
 
-    // Device is considered online if seen within last 25 seconds (ESP32 sends every 10s, polls every 1s)
+    // Device is considered online if seen within last 25 seconds
     const isOnline = lastSeen ? (Date.now() - new Date(lastSeen).getTime() < 25000) : false;
+
+    const actualMotor = controlState ? (controlState.actualMotorState || (latestReading ? latestReading.motorState : 'OFF')) : 'OFF';
+    const motorCommand = controlState ? (controlState.motorCommand || 'OFF') : 'OFF';
+    const isConfirmed = actualMotor === motorCommand;
 
     return res.status(200).json({
       deviceId,
       online: isOnline,
       lastSeen,
       reading: latestReading,
-      control: controlState || { autoMode: true, motorCommand: 'OFF', dryThreshold: 3000 }
+      control: controlState ? {
+        autoMode: controlState.autoMode,
+        motorCommand: controlState.motorCommand,
+        dryThreshold: controlState.dryThreshold || 3000,
+        actualMotorState: actualMotor,
+        commandPending: Boolean(controlState.commandPending),
+        motorConfirmedAt: controlState.motorConfirmedAt || null,
+        isConfirmed
+      } : {
+        autoMode: true,
+        motorCommand: 'OFF',
+        dryThreshold: 3000,
+        actualMotorState: 'OFF',
+        commandPending: false,
+        motorConfirmedAt: null,
+        isConfirmed: true
+      }
     });
   } catch (error) {
     return res.status(500).json({ success: false, error: error.message });
@@ -417,13 +631,24 @@ router.post('/simulate', async (req, res) => {
       timestamp: new Date()
     };
 
+    const now = new Date();
+    let confirmedMatch = false;
+
     if (isDbConnected()) {
       await SensorReading.create(payload);
+      const currentControl = await DeviceControl.findOne({ deviceId });
+      if (currentControl && currentControl.commandPending && currentControl.motorCommand === currentMotor) {
+        confirmedMatch = true;
+      }
       await DeviceControl.findOneAndUpdate(
         { deviceId },
         {
           $set: {
-            lastSeen: new Date(),
+            actualMotorState: currentMotor,
+            commandPending: confirmedMatch ? false : (currentControl ? currentControl.commandPending : false),
+            motorConfirmedAt: confirmedMatch ? now : (currentControl ? currentControl.motorConfirmedAt : null),
+            lastAckTimestamp: now,
+            lastSeen: now,
             latestReading: payload
           }
         },
@@ -436,18 +661,43 @@ router.post('/simulate', async (req, res) => {
           deviceId,
           autoMode: effectiveAutoMode,
           motorCommand: 'OFF',
-          dryThreshold: 3000
+          dryThreshold: 3000,
+          actualMotorState: currentMotor,
+          commandPending: false,
+          commandSentAt: null,
+          motorConfirmedAt: null,
+          lastAckTimestamp: now,
+          lastSeen: now
         };
       }
-      inMemoryStore.devices[deviceId].lastSeen = new Date();
-      inMemoryStore.devices[deviceId].latestReading = payload;
+      const dev = inMemoryStore.devices[deviceId];
+      if (dev.commandPending && dev.motorCommand === currentMotor) {
+        confirmedMatch = true;
+        dev.commandPending = false;
+        dev.motorConfirmedAt = now;
+      }
+      dev.actualMotorState = currentMotor;
+      dev.lastSeen = now;
+      dev.lastAckTimestamp = now;
+      dev.latestReading = payload;
     }
 
     broadcastUpdate('telemetry', {
       deviceId,
       reading: payload,
+      actualMotorState: currentMotor,
       online: true
     });
+
+    if (confirmedMatch) {
+      broadcastUpdate('motor_confirmed', {
+        deviceId,
+        actualMotorState: currentMotor,
+        confirmed: true,
+        timestamp: now,
+        message: `Motor turned ${currentMotor} successfully!`
+      });
+    }
 
     return res.status(200).json({
       success: true,

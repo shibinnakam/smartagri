@@ -281,7 +281,13 @@
                 </div>
               </div>
               <div class="pump-status-text">
-                <div class="pump-label">RELAY PIN 26</div>
+                <div class="pump-header-meta">
+                  <span class="pump-label">RELAY PIN 26</span>
+                  <span class="hardware-verify-badge badge-standby" id="hardwareVerifyBadge">
+                    <i data-lucide="shield-check" class="icon-micro"></i>
+                    <span id="hardwareVerifyText">Hardware Standby</span>
+                  </span>
+                </div>
                 <div class="pump-state-headline" id="pumpStateHeadline">MOTOR IS OFF</div>
                 <div class="pump-subtext" id="pumpStateSubtext">Standby. Soil moisture is within safe limit.</div>
               </div>
@@ -314,22 +320,24 @@
               <!-- 2. Manual Motor Switch -->
               <div class="control-group" id="manualMotorGroup">
                 <div class="control-label-wrap">
-                  <label class="control-label">Instant Pump Control</label>
+                  <label class="control-label">Hardware Motor Control</label>
                   <span class="badge-lock" id="manualLockBadge" style="display: none;">
                     <i data-lucide="zap" class="icon-micro"></i> Instant
                   </span>
                 </div>
                 <div class="manual-buttons-wrap">
                   <button class="btn-motor-toggle btn-motor-on" id="btnMotorOn">
-                    <i data-lucide="power" class="icon-sm"></i>
-                    <span>START PUMP (ON)</span>
+                    <span class="btn-spinner" id="motorOnSpinner" style="display: none;"></span>
+                    <i data-lucide="power" class="icon-sm" id="motorOnIcon"></i>
+                    <span id="motorOnText">START PUMP (ON)</span>
                   </button>
                   <button class="btn-motor-toggle btn-motor-off" id="btnMotorOff">
-                    <i data-lucide="power-off" class="icon-sm"></i>
-                    <span>STOP PUMP (OFF)</span>
+                    <span class="btn-spinner" id="motorOffSpinner" style="display: none;"></span>
+                    <i data-lucide="power-off" class="icon-sm" id="motorOffIcon"></i>
+                    <span id="motorOffText">STOP PUMP (OFF)</span>
                   </button>
                 </div>
-                <p class="control-hint">Press <strong>START</strong> or <strong>STOP</strong> for instant motor control at any time.</p>
+                <p class="control-hint">Press <strong>START</strong> or <strong>STOP</strong>. Commands verify with ESP32 before confirming running state.</p>
               </div>
 
               <!-- 3. Dry Threshold Calibrator -->
