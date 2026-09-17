@@ -404,23 +404,24 @@ function updateControlStateUI(autoMode, motorCommand, dryThreshold) {
   if (state.autoMode) {
     el.btnSetAutoMode.classList.add('active');
     el.btnSetManualMode.classList.remove('active');
-    el.modeHintText.textContent = 'ESP32 automatically triggers motor when soil goes above threshold.';
+    el.modeHintText.textContent = 'ESP32 automatically triggers motor when soil goes above threshold. Click START or STOP anytime for instant manual control.';
     
-    // Lock manual buttons
-    el.manualLockBadge.style.display = 'inline-flex';
-    el.btnMotorOn.disabled = true;
-    el.btnMotorOff.disabled = true;
+    // Keep buttons clickable for instant override!
+    if (el.manualLockBadge) el.manualLockBadge.style.display = 'none';
+    el.btnMotorOn.disabled = false;
+    el.btnMotorOff.disabled = false;
+    el.btnMotorOn.classList.remove('active');
+    el.btnMotorOff.classList.remove('active');
   } else {
     el.btnSetAutoMode.classList.remove('active');
     el.btnSetManualMode.classList.add('active');
     el.modeHintText.textContent = 'Manual mode active! Remote dashboard commands directly control the relay.';
 
-    // Unlock manual buttons
-    el.manualLockBadge.style.display = 'none';
+    if (el.manualLockBadge) el.manualLockBadge.style.display = 'none';
     el.btnMotorOn.disabled = false;
     el.btnMotorOff.disabled = false;
 
-    // Highlight manual button based on motorCommand
+    // Highlight active button based on motorCommand
     if (state.motorCommand === 'ON') {
       el.btnMotorOn.classList.add('active');
       el.btnMotorOff.classList.remove('active');
@@ -681,23 +682,25 @@ function setupEventListeners() {
     }
   });
 
-  // Manual Motor Controls
+  // Direct Motor Controls - Instant Action
   el.btnMotorOn.addEventListener('click', async () => {
-    if (state.autoMode) return;
-    const success = await sendControlUpdate({ motorCommand: 'ON' });
-    if (success) {
-      showToast('Manual Motor Command: ON', 'success');
-      addLog('Direct Motor Command sent: ON', 'log-pump');
-    }
+    // Instant optimistic UI response
+    updatePumpVisual('ON');
+    updateControlStateUI(false, 'ON', state.dryThreshold);
+    showToast('Starting Motor Immediately (Manual Mode)...', 'success');
+    addLog('⚡ Direct Motor Command sent: ON', 'log-pump');
+
+    await sendControlUpdate({ autoMode: false, motorCommand: 'ON' });
   });
 
   el.btnMotorOff.addEventListener('click', async () => {
-    if (state.autoMode) return;
-    const success = await sendControlUpdate({ motorCommand: 'OFF' });
-    if (success) {
-      showToast('Manual Motor Command: OFF', 'info');
-      addLog('Direct Motor Command sent: OFF', 'log-pump');
-    }
+    // Instant optimistic UI response
+    updatePumpVisual('OFF');
+    updateControlStateUI(false, 'OFF', state.dryThreshold);
+    showToast('Stopping Motor Immediately...', 'info');
+    addLog('⚡ Direct Motor Command sent: OFF', 'log-pump');
+
+    await sendControlUpdate({ autoMode: false, motorCommand: 'OFF' });
   });
 
   // Dry Threshold Slider

@@ -314,22 +314,22 @@
               <!-- 2. Manual Motor Switch -->
               <div class="control-group" id="manualMotorGroup">
                 <div class="control-label-wrap">
-                  <label class="control-label">Direct Pump Override</label>
-                  <span class="badge-lock" id="manualLockBadge" style="display: inline-flex;">
-                    <i data-lucide="lock" class="icon-micro"></i> Auto Active
+                  <label class="control-label">Instant Pump Control</label>
+                  <span class="badge-lock" id="manualLockBadge" style="display: none;">
+                    <i data-lucide="zap" class="icon-micro"></i> Instant
                   </span>
                 </div>
                 <div class="manual-buttons-wrap">
-                  <button class="btn-motor-toggle btn-motor-on" id="btnMotorOn" disabled>
+                  <button class="btn-motor-toggle btn-motor-on" id="btnMotorOn">
                     <i data-lucide="power" class="icon-sm"></i>
                     <span>START PUMP (ON)</span>
                   </button>
-                  <button class="btn-motor-toggle btn-motor-off active" id="btnMotorOff" disabled>
+                  <button class="btn-motor-toggle btn-motor-off" id="btnMotorOff">
                     <i data-lucide="power-off" class="icon-sm"></i>
                     <span>STOP PUMP (OFF)</span>
                   </button>
                 </div>
-                <p class="control-hint">Switch to <strong>MANUAL</strong> mode above to unlock manual pump override.</p>
+                <p class="control-hint">Press <strong>START</strong> or <strong>STOP</strong> for instant motor control at any time.</p>
               </div>
 
               <!-- 3. Dry Threshold Calibrator -->

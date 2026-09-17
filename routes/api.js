@@ -207,7 +207,11 @@ router.post('/control/:deviceId', async (req, res) => {
 
     const updates = {};
     if (autoMode !== undefined) updates.autoMode = Boolean(autoMode);
-    if (motorCommand !== undefined) updates.motorCommand = motorCommand === 'ON' ? 'ON' : 'OFF';
+    if (motorCommand !== undefined) {
+      updates.motorCommand = motorCommand === 'ON' ? 'ON' : 'OFF';
+      // Sync latestReading motorState for immediate dashboard display
+      updates['latestReading.motorState'] = updates.motorCommand;
+    }
     if (dryThreshold !== undefined) updates.dryThreshold = Number(dryThreshold);
 
     let updatedDevice;
@@ -226,10 +230,15 @@ router.post('/control/:deviceId', async (req, res) => {
           motorCommand: 'OFF',
           dryThreshold: 3000,
           lastSeen: null,
-          latestReading: null
+          latestReading: { motorState: 'OFF' }
         };
       }
       Object.assign(inMemoryStore.devices[deviceId], updates);
+      if (inMemoryStore.devices[deviceId].latestReading) {
+        if (updates.motorCommand) {
+          inMemoryStore.devices[deviceId].latestReading.motorState = updates.motorCommand;
+        }
+      }
       updatedDevice = inMemoryStore.devices[deviceId];
     }
 
