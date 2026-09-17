@@ -1,0 +1,20 @@
+{
+  "name": "smartagri-iot",
+  "version": "1.0.0",
+  "description": "Smart Farming System with ESP32, Node.js, and MongoDB Atlas",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "keywords": ["esp32", "iot", "smart-farming", "mongodb-atlas", "nodejs", "arduino"],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "mongoose": "^8.9.5",
+    "morgan": "^1.10.0"
+  }
+}

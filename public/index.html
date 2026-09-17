@@ -1,0 +1,639 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AgriPulse IoT | Smart Farming Monitoring & Control System</title>
+  <meta name="description" content="Next-generation Smart Agriculture IoT dashboard for real-time monitoring and control with ESP32, Node.js, and MongoDB Atlas.">
+  
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  
+  <!-- Lucide Icons -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+  
+  <!-- Chart.js for Historical Analytics -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+  <!-- Stylesheet -->
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body class="theme-dark">
+  <!-- Top Background Aurora Glows -->
+  <div class="ambient-glow glow-1"></div>
+  <div class="ambient-glow glow-2"></div>
+  <div class="ambient-glow glow-3"></div>
+
+  <div class="app-wrapper">
+    <!-- Navigation Bar -->
+    <header class="app-header">
+      <div class="header-left">
+        <div class="brand-logo">
+          <div class="logo-icon-wrap">
+            <i data-lucide="sprout" class="icon-brand"></i>
+          </div>
+          <div>
+            <div class="brand-title">AgriPulse <span class="badge-iot">IoT</span></div>
+            <div class="brand-subtitle">Smart Farming Command Center</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="header-center">
+        <!-- Device Info & Quick Connectivity Pills -->
+        <div class="device-pill" id="deviceStatusPill">
+          <span class="status-indicator-dot online" id="deviceDot"></span>
+          <span class="device-label">Device:</span>
+          <strong id="currentDeviceId">smartfarm-01</strong>
+          <span class="last-seen-text" id="lastSeenText">Syncing...</span>
+        </div>
+
+        <div class="mongo-pill" id="mongoPill" title="Click to configure MongoDB Atlas">
+          <i data-lucide="database" class="icon-sm"></i>
+          <span id="mongoStatusText">Atlas: Checking...</span>
+        </div>
+      </div>
+
+      <div class="header-right">
+        <button class="btn-secondary" id="btnOpenSimulator" title="Virtual ESP32 Simulator">
+          <i data-lucide="cpu" class="icon-sm"></i>
+          <span>ESP32 Simulator</span>
+        </button>
+        <button class="btn-secondary" id="btnOpenSetupGuide" title="Hardware Pinout & Guide">
+          <i data-lucide="wrench" class="icon-sm"></i>
+          <span>Hardware Setup</span>
+        </button>
+        <button class="btn-icon" id="btnOpenMongoModal" title="MongoDB Atlas Settings">
+          <i data-lucide="settings" class="icon-sm"></i>
+        </button>
+      </div>
+    </header>
+
+    <!-- Main Dashboard Container -->
+    <main class="dashboard-container">
+      
+      <!-- Top Alert Banner (Hidden by default, shown if device offline or dry soil alert) -->
+      <div class="alert-banner" id="systemAlertBanner" style="display: none;">
+        <div class="alert-content">
+          <i data-lucide="alert-triangle" class="icon-alert"></i>
+          <span id="systemAlertMessage">Soil Moisture critically low! Auto-irrigation initiated.</span>
+        </div>
+        <button class="alert-dismiss" id="btnDismissAlert">&times;</button>
+      </div>
+
+      <!-- Hero Summary & Control Overview Strip -->
+      <section class="overview-strip">
+        <div class="strip-item">
+          <div class="strip-label">SYSTEM STATE</div>
+          <div class="strip-value font-mono" id="heroSystemState">STANDBY</div>
+        </div>
+        <div class="strip-divider"></div>
+        <div class="strip-item">
+          <div class="strip-label">CONTROL MODE</div>
+          <div class="strip-value" id="heroControlMode">
+            <span class="mode-tag auto" id="heroModeTag">AUTO</span>
+          </div>
+        </div>
+        <div class="strip-divider"></div>
+        <div class="strip-item">
+          <div class="strip-label">IRRIGATION PUMP</div>
+          <div class="strip-value" id="heroPumpState">
+            <span class="pump-tag off" id="heroPumpTag">OFF</span>
+          </div>
+        </div>
+        <div class="strip-divider"></div>
+        <div class="strip-item">
+          <div class="strip-label">SOIL CONDITION</div>
+          <div class="strip-value" id="heroSoilCondition">Calibrating...</div>
+        </div>
+        <div class="strip-divider"></div>
+        <div class="strip-item">
+          <div class="strip-label">SERVER TIME</div>
+          <div class="strip-value font-mono" id="liveClock">--:--:--</div>
+        </div>
+      </section>
+
+      <!-- Primary Grid: Live Sensor Vitals -->
+      <section class="vitals-grid">
+        
+        <!-- CARD 1: SOIL MOISTURE -->
+        <div class="vital-card card-soil">
+          <div class="card-header">
+            <div class="header-tag">
+              <i data-lucide="droplets" class="card-icon icon-cyan"></i>
+              <span>SOIL MOISTURE</span>
+            </div>
+            <span class="sensor-badge badge-cyan" id="soilStatusBadge">Optimal</span>
+          </div>
+          <div class="card-body">
+            <div class="gauge-display">
+              <div class="gauge-value" id="soilMoistureDisplay">--</div>
+              <div class="gauge-unit">ADC Raw</div>
+            </div>
+            <div class="progress-bar-container">
+              <div class="progress-bar soil-bar" id="soilMoistureBar" style="width: 50%;"></div>
+            </div>
+            <div class="vital-details">
+              <div class="detail-row">
+                <span>Calculated Wetness:</span>
+                <strong id="soilWetnessPercent">-- %</strong>
+              </div>
+              <div class="detail-row">
+                <span>Trigger Threshold:</span>
+                <span class="font-mono text-muted" id="thresholdDisplay">> 3000 (Dry)</span>
+              </div>
+            </div>
+          </div>
+          <div class="card-footer">
+            <i data-lucide="activity" class="icon-micro"></i>
+            <span>Pin 34 (Analog Read)</span>
+          </div>
+        </div>
+
+        <!-- CARD 2: TEMPERATURE -->
+        <div class="vital-card card-temp">
+          <div class="card-header">
+            <div class="header-tag">
+              <i data-lucide="thermometer" class="card-icon icon-orange"></i>
+              <span>TEMPERATURE</span>
+            </div>
+            <span class="sensor-badge badge-orange" id="tempStatusBadge">Normal</span>
+          </div>
+          <div class="card-body">
+            <div class="gauge-display">
+              <div class="gauge-value" id="temperatureDisplay">--</div>
+              <div class="gauge-unit">°C</div>
+            </div>
+            <div class="progress-bar-container">
+              <div class="progress-bar temp-bar" id="tempBar" style="width: 45%;"></div>
+            </div>
+            <div class="vital-details">
+              <div class="detail-row">
+                <span>Fahrenheit:</span>
+                <strong id="tempFahrenheit">-- °F</strong>
+              </div>
+              <div class="detail-row">
+                <span>Sensor Source:</span>
+                <span class="font-mono text-muted">DHT11 (Pin 4)</span>
+              </div>
+            </div>
+          </div>
+          <div class="card-footer">
+            <i data-lucide="info" class="icon-micro"></i>
+            <span>Range: 0°C to 50°C</span>
+          </div>
+        </div>
+
+        <!-- CARD 3: HUMIDITY -->
+        <div class="vital-card card-humidity">
+          <div class="card-header">
+            <div class="header-tag">
+              <i data-lucide="cloud-rain" class="card-icon icon-blue"></i>
+              <span>HUMIDITY</span>
+            </div>
+            <span class="sensor-badge badge-blue" id="humidityStatusBadge">Optimal</span>
+          </div>
+          <div class="card-body">
+            <div class="gauge-display">
+              <div class="gauge-value" id="humidityDisplay">--</div>
+              <div class="gauge-unit">% RH</div>
+            </div>
+            <div class="progress-bar-container">
+              <div class="progress-bar hum-bar" id="humidityBar" style="width: 60%;"></div>
+            </div>
+            <div class="vital-details">
+              <div class="detail-row">
+                <span>Vapor Comfort:</span>
+                <strong id="comfortLevel">Standard</strong>
+              </div>
+              <div class="detail-row">
+                <span>Dew Point:</span>
+                <span class="font-mono text-muted" id="dewPointDisplay">-- °C</span>
+              </div>
+            </div>
+          </div>
+          <div class="card-footer">
+            <i data-lucide="waves" class="icon-micro"></i>
+            <span>DHT11 Relative Humidity</span>
+          </div>
+        </div>
+
+        <!-- CARD 4: SUNLIGHT & LDR -->
+        <div class="vital-card card-ldr">
+          <div class="card-header">
+            <div class="header-tag">
+              <i data-lucide="sun" class="card-icon icon-yellow"></i>
+              <span>SUNLIGHT / LDR</span>
+            </div>
+            <span class="sensor-badge badge-yellow" id="ldrStatusBadge">Daylight</span>
+          </div>
+          <div class="card-body">
+            <div class="gauge-display">
+              <div class="gauge-value" id="ldrValueDisplay">--</div>
+              <div class="gauge-unit">ADC Raw</div>
+            </div>
+            <div class="progress-bar-container">
+              <div class="progress-bar ldr-bar" id="ldrBar" style="width: 70%;"></div>
+            </div>
+            <div class="vital-details">
+              <div class="detail-row">
+                <span>Light Intensity:</span>
+                <strong id="lightIntensityLabel">Medium Bright</strong>
+              </div>
+              <div class="detail-row">
+                <span>Sensor Source:</span>
+                <span class="font-mono text-muted">LDR (Pin 35)</span>
+              </div>
+            </div>
+          </div>
+          <div class="card-footer">
+            <i data-lucide="compass" class="icon-micro"></i>
+            <span>Photosensitive Resistor</span>
+          </div>
+        </div>
+
+      </section>
+
+      <!-- Secondary Row: Control Center & Realtime Pump Visualizer -->
+      <section class="control-analytics-row">
+        
+        <!-- PUMP VISUALIZER & COMMAND STATION -->
+        <div class="panel-box control-station-panel">
+          <div class="panel-header">
+            <div class="panel-title">
+              <i data-lucide="sliders" class="icon-accent"></i>
+              <span>PUMP & AUTOMATION CONTROL</span>
+            </div>
+            <div class="panel-badge" id="commandSyncBadge">Commands synced</div>
+          </div>
+
+          <div class="control-station-content">
+            
+            <!-- Dynamic Pump Animation Card -->
+            <div class="pump-graphic-card" id="pumpVisualCard">
+              <div class="pump-rings">
+                <div class="pump-pulse-ring ring-1"></div>
+                <div class="pump-pulse-ring ring-2"></div>
+                <div class="pump-core" id="pumpCoreIcon">
+                  <i data-lucide="fan" class="icon-pump-fan"></i>
+                </div>
+              </div>
+              <div class="pump-status-text">
+                <div class="pump-label">RELAY PIN 26</div>
+                <div class="pump-state-headline" id="pumpStateHeadline">MOTOR IS OFF</div>
+                <div class="pump-subtext" id="pumpStateSubtext">Standby. Soil moisture is within safe limit.</div>
+              </div>
+            </div>
+
+            <!-- Controls Grid -->
+            <div class="interactive-controls">
+              
+              <!-- 1. Mode Switcher -->
+              <div class="control-group">
+                <div class="control-label-wrap">
+                  <label class="control-label">Control Mode</label>
+                  <span class="tooltip-info" title="Auto Mode: ESP32 runs autonomous irrigation based on Soil > 3000. Manual Mode: You toggle the pump manually.">
+                    <i data-lucide="help-circle" class="icon-micro"></i>
+                  </span>
+                </div>
+                <div class="mode-toggle-pill">
+                  <button class="mode-pill-btn active" id="btnSetAutoMode">
+                    <i data-lucide="zap" class="icon-xs"></i>
+                    <span>AUTO</span>
+                  </button>
+                  <button class="mode-pill-btn" id="btnSetManualMode">
+                    <i data-lucide="hand" class="icon-xs"></i>
+                    <span>MANUAL</span>
+                  </button>
+                </div>
+                <p class="control-hint" id="modeHintText">ESP32 automatically triggers motor when soil goes above threshold.</p>
+              </div>
+
+              <!-- 2. Manual Motor Switch -->
+              <div class="control-group" id="manualMotorGroup">
+                <div class="control-label-wrap">
+                  <label class="control-label">Direct Pump Override</label>
+                  <span class="badge-lock" id="manualLockBadge" style="display: inline-flex;">
+                    <i data-lucide="lock" class="icon-micro"></i> Auto Active
+                  </span>
+                </div>
+                <div class="manual-buttons-wrap">
+                  <button class="btn-motor-toggle btn-motor-on" id="btnMotorOn" disabled>
+                    <i data-lucide="power" class="icon-sm"></i>
+                    <span>START PUMP (ON)</span>
+                  </button>
+                  <button class="btn-motor-toggle btn-motor-off active" id="btnMotorOff" disabled>
+                    <i data-lucide="power-off" class="icon-sm"></i>
+                    <span>STOP PUMP (OFF)</span>
+                  </button>
+                </div>
+                <p class="control-hint">Switch to <strong>MANUAL</strong> mode above to unlock manual pump override.</p>
+              </div>
+
+              <!-- 3. Dry Threshold Calibrator -->
+              <div class="control-group">
+                <div class="control-label-wrap">
+                  <label class="control-label">Dry Threshold Calibration</label>
+                  <strong class="font-mono text-emerald" id="sliderValueText">3000</strong>
+                </div>
+                <input type="range" class="range-slider" id="thresholdSlider" min="1500" max="3800" step="50" value="3000">
+                <div class="slider-ticks">
+                  <span>1500 (Wet)</span>
+                  <span>Default 3000</span>
+                  <span>3800 (Bone Dry)</span>
+                </div>
+              </div>
+
+              <!-- Emergency Stop -->
+              <button class="btn-emergency-stop" id="btnEmergencyStop">
+                <i data-lucide="octagon-alert" class="icon-sm"></i>
+                <span>EMERGENCY PUMP SHUTOFF</span>
+              </button>
+
+            </div>
+
+          </div>
+        </div>
+
+        <!-- TELEMETRY CHARTS -->
+        <div class="panel-box analytics-panel">
+          <div class="panel-header">
+            <div class="panel-title">
+              <i data-lucide="line-chart" class="icon-accent"></i>
+              <span>REAL-TIME TELEMETRY TRENDS</span>
+            </div>
+            <div class="chart-tab-group">
+              <button class="chart-tab active" data-chart="soil">Soil Moisture</button>
+              <button class="chart-tab" data-chart="climate">Temp & Humidity</button>
+              <button class="chart-tab" data-chart="light">Sunlight (LDR)</button>
+            </div>
+          </div>
+
+          <div class="chart-container-wrap">
+            <canvas id="telemetryChart"></canvas>
+          </div>
+
+          <div class="chart-footer-meta">
+            <div class="meta-item">
+              <span class="legend-dot dot-cyan"></span>
+              <span id="chartLegendText">Soil ADC (Trigger line at 3000)</span>
+            </div>
+            <div class="meta-item">
+              <span class="font-mono text-muted" id="dataPointsCount">0 samples loaded</span>
+            </div>
+          </div>
+        </div>
+
+      </section>
+
+      <!-- Event Log & Hardware Status Feed -->
+      <section class="logs-feed-section">
+        <div class="panel-box logs-panel">
+          <div class="panel-header">
+            <div class="panel-title">
+              <i data-lucide="terminal" class="icon-accent"></i>
+              <span>SYSTEM EVENT & TELEMETRY STREAM</span>
+            </div>
+            <button class="btn-ghost-sm" id="btnClearLogs">Clear Log</button>
+          </div>
+          <div class="logs-stream-container" id="logsContainer">
+            <!-- Dynamic log items inserted here -->
+            <div class="log-entry log-info">
+              <span class="log-time">[System]</span>
+              <span class="log-msg">SmartAgri Hub initialized. Waiting for ESP32 or Simulator telemetry...</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+    </main>
+
+    <!-- Footer -->
+    <footer class="app-footer">
+      <div>AgriPulse IoT • ESP32 Smart Farming Dashboard • Node.js & MongoDB Atlas</div>
+      <div class="footer-links">
+        <a href="#simulator" id="footerSimLink">Launch Simulator</a>
+        <span>•</span>
+        <a href="#setup" id="footerSetupLink">Wiring Diagram</a>
+        <span>•</span>
+        <a href="#atlas" id="footerAtlasLink">Atlas Connection</a>
+      </div>
+    </footer>
+  </div>
+
+  <!-- ================= MODALS & SLIDE-OVERS ================= -->
+
+  <!-- 1. VIRTUAL ESP32 SIMULATOR MODAL/DRAWER -->
+  <div class="modal-backdrop" id="simulatorModal">
+    <div class="modal-card modal-lg">
+      <div class="modal-header">
+        <div class="modal-title-wrap">
+          <i data-lucide="cpu" class="icon-accent"></i>
+          <div>
+            <h3>ESP32 Hardware Simulator</h3>
+            <p>Test the web application without physical hardware connected</p>
+          </div>
+        </div>
+        <button class="modal-close" id="btnCloseSimulator">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p class="text-secondary mb-4">
+          Adjust the virtual sensor readings below and trigger sample telemetry packets directly into the Node.js server. 
+          When in <strong>AUTO</strong> mode, setting Soil Moisture &gt; 3000 will automatically activate the irrigation motor!
+        </p>
+
+        <div class="sim-grid">
+          <!-- Soil Slider -->
+          <div class="sim-card">
+            <div class="sim-header">
+              <label>Soil Moisture (ADC: 0-4095)</label>
+              <strong class="font-mono text-cyan" id="simSoilValueText">3250</strong>
+            </div>
+            <input type="range" class="range-slider" id="simSoilSlider" min="1000" max="4000" value="3250">
+            <div class="sim-presets">
+              <button class="btn-chip" id="setSoilWet">Wet (1800)</button>
+              <button class="btn-chip" id="setSoilOptimal">Optimal (2600)</button>
+              <button class="btn-chip active" id="setSoilDry">Dry (3400)</button>
+            </div>
+          </div>
+
+          <!-- Temp Slider -->
+          <div class="sim-card">
+            <div class="sim-header">
+              <label>Temperature (°C)</label>
+              <strong class="font-mono text-orange" id="simTempValueText">28.5 °C</strong>
+            </div>
+            <input type="range" class="range-slider" id="simTempSlider" min="10" max="45" step="0.5" value="28.5">
+          </div>
+
+          <!-- Humidity Slider -->
+          <div class="sim-card">
+            <div class="sim-header">
+              <label>Humidity (% RH)</label>
+              <strong class="font-mono text-blue" id="simHumValueText">65 %</strong>
+            </div>
+            <input type="range" class="range-slider" id="simHumSlider" min="20" max="95" value="65">
+          </div>
+
+          <!-- LDR Slider -->
+          <div class="sim-card">
+            <div class="sim-header">
+              <label>LDR Sunlight (ADC: 0-4095)</label>
+              <strong class="font-mono text-yellow" id="simLdrValueText">2100</strong>
+            </div>
+            <input type="range" class="range-slider" id="simLdrSlider" min="200" max="4000" value="2100">
+          </div>
+        </div>
+
+        <div class="sim-actions-strip">
+          <button class="btn-primary" id="btnSimulateSend">
+            <i data-lucide="send" class="icon-sm"></i>
+            <span>Send Telemetry Packet Now</span>
+          </button>
+          <button class="btn-secondary" id="btnSimulateAutoToggle">
+            <i data-lucide="play" class="icon-sm"></i>
+            <span id="simAutoText">Start Auto Simulation (every 2s)</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 2. HARDWARE SETUP & ARDUINO CODE MODAL -->
+  <div class="modal-backdrop" id="setupGuideModal">
+    <div class="modal-card modal-lg">
+      <div class="modal-header">
+        <div class="modal-title-wrap">
+          <i data-lucide="wrench" class="icon-accent"></i>
+          <div>
+            <h3>ESP32 Hardware & Code Configuration</h3>
+            <p>Pinouts, circuit connections, and server connection settings</p>
+          </div>
+        </div>
+        <button class="modal-close" id="btnCloseSetupGuide">&times;</button>
+      </div>
+      <div class="modal-body">
+        
+        <!-- Pinout Table -->
+        <h4 class="section-subheading">ESP32 Pinout Connections</h4>
+        <div class="table-responsive">
+          <table class="guide-table">
+            <thead>
+              <tr>
+                <th>Component</th>
+                <th>ESP32 Pin</th>
+                <th>Type</th>
+                <th>Description</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><strong>DHT11 / DHT22</strong></td>
+                <td><span class="pin-badge">GPIO 4</span></td>
+                <td>Digital (DHT Library)</td>
+                <td>Air Temperature & Relative Humidity</td>
+              </tr>
+              <tr>
+                <td><strong>Soil Moisture Sensor</strong></td>
+                <td><span class="pin-badge">GPIO 34</span></td>
+                <td>Analog (ADC1)</td>
+                <td>Higher value = Drier soil (Trigger &gt; 3000)</td>
+              </tr>
+              <tr>
+                <td><strong>LDR Light Sensor</strong></td>
+                <td><span class="pin-badge">GPIO 35</span></td>
+                <td>Analog (ADC1)</td>
+                <td>Ambient Sunlight Intensity</td>
+              </tr>
+              <tr>
+                <td><strong>Relay (Water Pump)</strong></td>
+                <td><span class="pin-badge">GPIO 26</span></td>
+                <td>Digital Output</td>
+                <td>Active LOW (LOW = Pump ON, HIGH = OFF)</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Connection Settings -->
+        <h4 class="section-subheading mt-6">Connecting ESP32 to This Server</h4>
+        <div class="code-instruction-box">
+          <p class="mb-2">In your Arduino sketch, configure the <code>SERVER_URL</code>:</p>
+          
+          <div class="code-snippet-box">
+            <div class="snippet-title">1. Local Wi-Fi Testing (Your PC):</div>
+            <code>const char* SERVER_URL = "http://<YOUR_PC_LOCAL_IP>:3000";</code>
+            <p class="text-xs text-muted mt-1">Note: Use <code>WiFiClient</code> instead of <code>WiFiClientSecure</code> if using local HTTP.</p>
+          </div>
+
+          <div class="code-snippet-box mt-3">
+            <div class="snippet-title">2. Cloud Deployment (Render.com):</div>
+            <code>const char* SERVER_URL = "https://your-smartagri.onrender.com";</code>
+            <p class="text-xs text-muted mt-1">Keep <code>WiFiClientSecure client; client.setInsecure();</code> as in your code.</p>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <!-- 3. MONGODB ATLAS SETTINGS MODAL -->
+  <div class="modal-backdrop" id="mongoModal">
+    <div class="modal-card">
+      <div class="modal-header">
+        <div class="modal-title-wrap">
+          <i data-lucide="database" class="icon-accent"></i>
+          <div>
+            <h3>MongoDB Atlas Configuration</h3>
+            <p>Connect your cloud database for persistent telemetry storage</p>
+          </div>
+        </div>
+        <button class="modal-close" id="btnCloseMongoModal">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="atlas-guide-callout">
+          <strong>How to get your MongoDB Atlas URI:</strong>
+          <ol class="atlas-steps">
+            <li>Go to <a href="https://cloud.mongodb.com" target="_blank" rel="noopener">cloud.mongodb.com</a> and sign in.</li>
+            <li>Click <strong>Connect</strong> on your Database Cluster.</li>
+            <li>Choose <strong>Drivers</strong> (Node.js).</li>
+            <li>Copy the connection string (format: <code>mongodb+srv://&lt;username&gt;:&lt;password&gt;@...</code>).</li>
+          </ol>
+        </div>
+
+        <div class="form-group mt-4">
+          <label for="mongoUriInput">Atlas Connection String</label>
+          <input type="password" class="form-input" id="mongoUriInput" placeholder="mongodb+srv://username:password@cluster.mongodb.net/smartagri?retryWrites=true&w=majority">
+          <div class="input-actions mt-1">
+            <button type="button" class="btn-text-xs" id="btnToggleMongoVisibility">Show Password</button>
+          </div>
+        </div>
+
+        <div class="status-box mt-3" id="mongoConnectStatusBox" style="display: none;">
+          <span id="mongoConnectStatusMsg"></span>
+        </div>
+
+        <div class="modal-actions mt-4">
+          <button class="btn-secondary" id="btnCancelMongo">Cancel</button>
+          <button class="btn-primary" id="btnSaveMongoUri">
+            <i data-lucide="save" class="icon-xs"></i>
+            <span>Test & Connect Atlas</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast Notification Container -->
+  <div class="toast-container" id="toastContainer"></div>
+
+  <!-- App Script -->
+  <script src="js/app.js"></script>
+  <script>
+    // Initialize Lucide Icons
+    lucide.createIcons();
+  </script>
+</body>
+</html>
