@@ -7,8 +7,9 @@
 // SMART FARMING SYSTEM (ESP32)
 // Render Server: https://smartagri-xxq4.onrender.com
 // Features:
-// 1. Senses and sends data to MongoDB every 2 MINUTES.
-// 2. Polls commands every 500ms with persistent TLS for INSTANT Motor ON/OFF!
+// 1. Senses and sends full telemetry to MongoDB every 2 MINUTES.
+// 2. Polls commands every 500ms with persistent TLS for INSTANT manual Motor ON/OFF!
+// 3. Real-time soil moisture monitoring (every 500ms in AUTO mode) prevents overwatering!
 // ==========================================
 
 // ---------- WIFI CONFIGURATION ----------
@@ -43,7 +44,18 @@ bool manualMotorCommand = false;
 bool motorState = false;
 
 // Higher reading = drier soil (0 - 4095)
+// Dry trigger: When soilValue > DRY_THRESHOLD, pump turns ON
 #define DRY_THRESHOLD 3000
+
+// Hysteresis buffer to avoid rapid relay clicking (chatter) and prevent overwatering.
+// Turn pump OFF when soilValue <= WET_THRESHOLD (e.g. 2850).
+#define MOISTURE_HYSTERESIS 150
+#define WET_THRESHOLD (DRY_THRESHOLD - MOISTURE_HYSTERESIS)
+
+// Safety shutoff: Maximum continuous pump runtime in AUTO mode (e.g. 45 seconds).
+// Prevents flooding and motor burnout if water tank is empty or sensor is misplaced.
+const unsigned long MAX_PUMP_RUN_TIME = 45000;
+unsigned long pumpStartTime = 0;
 
 // ---------- TIMING INTERVALS ----------
 
@@ -51,13 +63,17 @@ unsigned long lastSensorRead = 0;
 unsigned long lastDataSend = 0;
 unsigned long lastCommandCheck = 0;
 unsigned long lastWiFiCheck = 0;
+unsigned long lastAutoSoilCheck = 0;
 
-// Every 2 minutes (120,000 milliseconds) for sensing and database storage
+// Every 2 minutes (120,000 milliseconds) for full sensing and database storage
 const unsigned long SENSOR_INTERVAL = 120000;
 const unsigned long SERVER_INTERVAL = 120000;
 
 // Every 500ms for INSTANT website button reaction
 const unsigned long COMMAND_INTERVAL = 500;
+
+// Every 500ms for real-time automatic soil moisture monitoring & instant shutoff
+const unsigned long AUTO_SOIL_CHECK_INTERVAL = 500;
 
 // ---------- SENSOR VALUES ----------
 
@@ -74,6 +90,23 @@ String lastCmdUrl = "";
 
 // Forward declarations
 void sendMotorAck(bool state);
+int readSoilMoisture();
+void automaticControl();
+
+// ==========================================
+// FAST SOIL MOISTURE SENSOR READ
+// Multi-sample smoothing to eliminate ADC electrical noise
+// ==========================================
+
+int readSoilMoisture() {
+  long sum = 0;
+  for (int i = 0; i < 5; i++) {
+    sum += analogRead(SOIL_PIN);
+    delayMicroseconds(200);
+  }
+  soilValue = sum / 5;
+  return soilValue;
+}
 
 // ==========================================
 // MOTOR SWITCH FUNCTION
@@ -83,6 +116,7 @@ void setMotor(bool state) {
   motorState = state;
 
   if (motorState) {
+    pumpStartTime = millis();
     digitalWrite(RELAY_PIN, RELAY_ON);
     Serial.println("===============================");
     Serial.println(">>> MOTOR: ON (PUMP RUNNING) <<<");
@@ -148,24 +182,58 @@ void connectWiFi() {
 
 // ==========================================
 // AUTOMATIC MOTOR CONTROL (AUTO MODE)
+// Fast real-time check to prevent overwatering
 // ==========================================
 
 void automaticControl() {
   if (!autoMode) return;
 
-  if (soilValue > DRY_THRESHOLD) {
-    // Soil is DRY -> Turn Motor ON
-    if (!motorState) {
-      Serial.println("[AUTO] Soil is dry. Turning pump ON.");
-      setMotor(true);
-      sendMotorAck(true);
-    }
-  } else {
-    // Soil is WET / OPTIMAL -> Turn Motor OFF
-    if (motorState) {
-      Serial.println("[AUTO] Soil is moist. Turning pump OFF.");
+  // Always read the latest real-time soil moisture directly from the pin
+  readSoilMoisture();
+
+  if (motorState) {
+    // PUMP IS CURRENTLY RUNNING:
+    // Check continuously if the soil has received enough water
+    if (soilValue <= WET_THRESHOLD) {
+      Serial.println();
+      Serial.println("==================================================");
+      Serial.print("[AUTO] Soil is now MOIST (Reading: ");
+      Serial.print(soilValue);
+      Serial.print(" <= Threshold: ");
+      Serial.print(WET_THRESHOLD);
+      Serial.println(").");
+      Serial.println(">>> PUMP STOPPED IMMEDIATELY (PREVENTED OVERWATERING) <<<");
+      Serial.println("==================================================");
       setMotor(false);
       sendMotorAck(false);
+    } 
+    // Safety guard: prevent endless watering if sensor is displaced or water empty
+    else if (millis() - pumpStartTime >= MAX_PUMP_RUN_TIME) {
+      Serial.println();
+      Serial.println("==================================================");
+      Serial.print("[AUTO SAFETY] Max pump duration (");
+      Serial.print(MAX_PUMP_RUN_TIME / 1000);
+      Serial.println("s) reached!");
+      Serial.println(">>> PUMP STOPPED FOR SAFETY <<<");
+      Serial.println("==================================================");
+      setMotor(false);
+      sendMotorAck(false);
+    }
+  } else {
+    // PUMP IS CURRENTLY STANDBY (OFF):
+    // Check if soil has dried out and needs watering
+    if (soilValue > DRY_THRESHOLD) {
+      Serial.println();
+      Serial.println("==================================================");
+      Serial.print("[AUTO] Soil is DRY (Reading: ");
+      Serial.print(soilValue);
+      Serial.print(" > Threshold: ");
+      Serial.print(DRY_THRESHOLD);
+      Serial.println(").");
+      Serial.println(">>> PUMP STARTED (AUTOMATIC IRRIGATION) <<<");
+      Serial.println("==================================================");
+      setMotor(true);
+      sendMotorAck(true);
     }
   }
 }
@@ -178,7 +246,7 @@ void readSensors() {
   temperature = dht.readTemperature();
   humidity = dht.readHumidity();
 
-  soilValue = analogRead(SOIL_PIN);
+  soilValue = readSoilMoisture();
   ldrValue = analogRead(LDR_PIN);
 
   Serial.println();
@@ -352,6 +420,7 @@ void setup() {
   lastSensorRead = now;
   lastDataSend = now;
   lastCommandCheck = now;
+  lastAutoSoilCheck = now;
 }
 
 // ==========================================
@@ -365,6 +434,16 @@ void loop() {
   if (WiFi.status() != WL_CONNECTED && currentMillis - lastWiFiCheck >= 10000) {
     lastWiFiCheck = currentMillis;
     connectWiFi();
+  }
+
+  // ---------- REAL-TIME AUTO SOIL CHECK (EVERY 500MS) ----------
+  // In AUTO mode, continuously monitors soil moisture directly from the pin.
+  // When pump is ON, it immediately detects moisture and stops the pump!
+  if (currentMillis - lastAutoSoilCheck >= AUTO_SOIL_CHECK_INTERVAL) {
+    lastAutoSoilCheck = currentMillis;
+    if (autoMode) {
+      automaticControl();
+    }
   }
 
   // ---------- SENSOR READING (EVERY 2 MINUTES) ----------
