@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: smartagri
+    env: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: MONGODB_URI
+        sync: false
+      - key: DEFAULT_DEVICE_ID
+        value: smartfarm-01
+      - key: DRY_THRESHOLD
+        value: 3000
